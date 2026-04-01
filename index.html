@@ -5,6 +5,7 @@
   <title>100m Tile Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <!-- Leaflet CSS -->
   https://unpkg.com/leaflet@1.9.4/dist/leaflet.css
 
   <style>
@@ -53,7 +54,6 @@
     #resetBtn:hover {
       background: #ff3232;
     }
-
   </style>
 </head>
 
@@ -67,7 +67,9 @@
 
   <div id="map"></div>
 
+  <!-- Leaflet JS -->
   https://unpkg.com/leaflet@1.9.4/dist/leaflet.js
+  </script>
 
   <script>
     //----------------------------------------------------------
@@ -137,7 +139,7 @@
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
 
-      document.getElementById("gpsStatus").innerText = 
+      document.getElementById("gpsStatus").innerText =
         `GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
       if (!userMarker) {
