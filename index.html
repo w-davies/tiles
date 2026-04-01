@@ -5,11 +5,14 @@
   <title>100m Tile Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- Leaflet CSS -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-sA+4jWw35QJ7mU6VNpL16lI6w6Vx5VxK+I+UcI1C0r0="
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  <style>
+    body { margin: 0; overflow: hidden; }
+
+    #map {
+      width: 100vw;
+      height: 100vh;
     }
 
     /* Top UI bar */
@@ -50,6 +53,7 @@
     #resetBtn:hover {
       background: #ff3232;
     }
+
   </style>
 </head>
 
@@ -63,10 +67,10 @@
 
   <div id="map"></div>
 
-  <!-- Leaflet JS -->
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20oP2S4QVGL2dEoHGawEq+yLkOl---------------------
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    //----------------------------------------------------------
     // Load visited tiles
     //----------------------------------------------------------
     let visitedTiles = new Set(JSON.parse(localStorage.getItem("visitedTiles") || "[]"));
@@ -133,7 +137,7 @@
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
 
-      document.getElementById("gpsStatus").innerText =
+      document.getElementById("gpsStatus").innerText = 
         `GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
       if (!userMarker) {
