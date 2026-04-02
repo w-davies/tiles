@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -163,8 +163,10 @@
     }
 
     function handleGpsError(err) {
-      document.getElementById("gpsStatus").innerText =
-        "GPS error: " + err.message;
+      const status = document.getElementById("gpsStatus");
+      status.innerText = "GPS error: " + err.message;
+    
+      console.error("Geolocation error", err);
     }
 
     navigator.geolocation.watchPosition(
