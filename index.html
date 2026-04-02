@@ -2,189 +2,127 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>100m Tile Tracker</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <!-- Leaflet CSS -->
-  https://unpkg.com/leaflet@1.9.4/dist/leaflet.css
+  <title>GPS Debug Mode</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <style>
-    body { margin: 0; overflow: hidden; }
-
-    #map {
-      width: 100vw;
-      height: 100vh;
+    body {
+      margin: 0;
+      background: #111;
+      color: #0f0;
+      font-family: monospace;
+      padding: 10px;
+      white-space: pre-wrap;
     }
-
-    /* Top UI bar */
-    #topbar {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 2000;
-
-      background: rgba(0,0,0,0.65);
-      color: white;
-      padding: 10px 16px;
-      border-radius: 12px;
-      font-family: sans-serif;
-
-      display: flex;
-      gap: 20px;
-      align-items: center;
-
-      backdrop-filter: blur(4px);
+    .section {
+      margin-bottom: 20px;
+      padding: 10px;
+      border: 1px solid #0f0;
+      border-radius: 8px;
+      background: #000;
     }
-
-    #topbar span {
-      font-size: 14px;
+    .error {
+      color: #ff4444;
     }
-
-    #resetBtn {
-      padding: 6px 10px;
-      background: #ff5c5c;
-      border: none;
-      border-radius: 6px;
-      color: white;
-      cursor: pointer;
-      font-size: 13px;
-    }
-
-    #resetBtn:hover {
-      background: #ff3232;
+    .ok {
+      color: #44ff44;
     }
   </style>
 </head>
 
 <body>
 
-  <div id="topbar">
-    <span id="gpsStatus">GPS: waiting…</span>
-    <span id="tileCount">Tiles: 0</span>
-    <button id="resetBtn">Reset</button>
-  </div>
+  <h1>📡 GPS DEBUG VIEW</h1>
 
-  <div id="map"></div>
+  <div id="secure" class="section"></div>
+  <div id="permission" class="section"></div>
+  <div id="updates" class="section"></div>
+  <div id="errors" class="section"></div>
 
-  <!-- Leaflet JS -->
-  https://unpkg.com/leaflet@1.9.4/dist/leaflet.js
-  </script>
 
-  <script>
-    //----------------------------------------------------------
-    // Load visited tiles
-    //----------------------------------------------------------
-    let visitedTiles = new Set(JSON.parse(localStorage.getItem("visitedTiles") || "[]"));
-    document.getElementById("tileCount").innerText = "Tiles: " + visitedTiles.size;
+<script>
+/* -----------------------------------------------------------
+   SECURE CONTEXT CHECK
+----------------------------------------------------------- */
+const secureEl = document.getElementById("secure");
+secureEl.textContent = "Secure context: " + (window.isSecureContext ? "✅ YES" : "❌ NO");
+secureEl.className = "section " + (window.isSecureContext ? "ok" : "error");
 
-    //----------------------------------------------------------
-    // Tile conversion helpers (100m squares)
-    //----------------------------------------------------------
-    const TILE_SIZE_M = 100;
-    const DEG_PER_M_LAT = 1 / 111320;
+/* -----------------------------------------------------------
+   PERMISSION CHECK
+----------------------------------------------------------- */
+const permEl = document.getElementById("permission");
 
-    function lonDegPerMeter(lat) {
-      return 1 / (111320 * Math.cos(lat * Math.PI / 180));
-    }
+async function checkPermissions() {
+  if (!navigator.permissions) {
+    permEl.textContent = "Permissions API: ❌ NOT SUPPORTED";
+    permEl.className = "section error";
+    return;
+  }
 
-    function getTile(lat, lon) {
-      const latSize = TILE_SIZE_M * DEG_PER_M_LAT;
-      const lonSize = TILE_SIZE_M * lonDegPerMeter(lat);
+  try {
+    const result = await navigator.permissions.query({ name: "geolocation" });
+    permEl.textContent = "Geolocation Permission: " + result.state.toUpperCase();
 
-      const tileX = Math.floor(lon / lonSize);
-      const tileY = Math.floor(lat / latSize);
+    if (result.state === "granted") permEl.className = "section ok";
+    if (result.state === "prompt")  permEl.className = "section";
+    if (result.state === "denied")  permEl.className = "section error";
 
-      return { tileX, tileY, latSize, lonSize };
-    }
-
-    //----------------------------------------------------------
-    // Map setup
-    //----------------------------------------------------------
-    const map = L.map('map').setView([52.0, -3.0], 8);
-
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: "© OpenStreetMap contributors"
-    }).addTo(map);
-
-    let userMarker = null;
-
-    //----------------------------------------------------------
-    // Draw tile outline only
-    //----------------------------------------------------------
-    function drawTileOutline(x, y, latSize, lonSize) {
-      const minLat = y * latSize;
-      const maxLat = minLat + latSize;
-      const minLon = x * lonSize;
-      const maxLon = minLon + lonSize;
-
-      L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
-        color: "#00FF73",
-        weight: 2,
-        fillOpacity: 0
-      }).addTo(map);
-    }
-
-    // Draw existing visited tiles on load
-    for (const id of visitedTiles) {
-      const [x, y, latSize, lonSize] = id.split("_").map(Number);
-      drawTileOutline(x, y, latSize, lonSize);
-    }
-
-    //----------------------------------------------------------
-    // GPS update handler
-    //----------------------------------------------------------
-    function updatePosition(pos) {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-
-      document.getElementById("gpsStatus").innerText =
-        `GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-
-      if (!userMarker) {
-        userMarker = L.marker([lat, lon]).addTo(map);
-        map.setView([lat, lon], 16);
-      } else {
-        userMarker.setLatLng([lat, lon]);
-      }
-
-      const { tileX, tileY, latSize, lonSize } = getTile(lat, lon);
-      const key = `${tileX}_${tileY}_${latSize}_${lonSize}`;
-
-      if (!visitedTiles.has(key)) {
-        visitedTiles.add(key);
-        localStorage.setItem("visitedTiles", JSON.stringify([...visitedTiles]));
-        drawTileOutline(tileX, tileY, latSize, lonSize);
-
-        document.getElementById("tileCount").innerText =
-          "Tiles: " + visitedTiles.size;
-      }
-    }
-
-    function handleGpsError(err) {
-      const status = document.getElementById("gpsStatus");
-      status.innerText = "GPS error: " + err.message;
-    
-      console.error("Geolocation error", err);
-    }
-
-    navigator.geolocation.watchPosition(
-      updatePosition,
-      handleGpsError,
-      { enableHighAccuracy: true, maximumAge: 1000 }
-    );
-
-    //----------------------------------------------------------
-    // Reset button
-    //----------------------------------------------------------
-    document.getElementById("resetBtn").onclick = () => {
-      if (!confirm("Clear all visited tiles?")) return;
-      localStorage.removeItem("visitedTiles");
-      visitedTiles.clear();
-      location.reload();
+    // Update when permission changes
+    result.onchange = () => {
+      permEl.textContent = "Geolocation Permission: " + result.state.toUpperCase();
     };
-  </script>
+
+  } catch (e) {
+    permEl.textContent = "Permissions API error: " + e;
+    permEl.className = "section error";
+  }
+}
+
+checkPermissions();
+
+/* -----------------------------------------------------------
+   GEOLOCATION DEBUG OUTPUT
+----------------------------------------------------------- */
+const updatesEl = document.getElementById("updates");
+const errorsEl = document.getElementById("errors");
+
+updatesEl.textContent = "Waiting for GPS updates...\n";
+
+function updatePosition(pos) {
+  const c = pos.coords;
+  const t = new Date(pos.timestamp).toLocaleTimeString();
+
+  updatesEl.textContent =
+    "✅ GPS UPDATE at " + t + "\n\n" +
+    "Latitude:  " + c.latitude + "\n" +
+    "Longitude: " + c.longitude + "\n" +
+    "Accuracy:  " + c.accuracy + "m\n" +
+    "Altitude:  " + c.altitude + "\n" +
+    "Heading:   " + c.heading + "\n" +
+    "Speed:     " + c.speed + "\n" +
+    "Timestamp: " + pos.timestamp + "\n";
+}
+
+function gpsError(err) {
+  errorsEl.textContent =
+    "❌ GPS ERROR\n" +
+    "Code: " + err.code + "\n" +
+    "Message: " + err.message;
+  errorsEl.className = "section error";
+}
+
+// Start position watcher
+navigator.geolocation.watchPosition(
+  updatePosition,
+  gpsError,
+  {
+    enableHighAccuracy: true,
+    timeout: 5000,
+    maximumAge: 0
+  }
+);
+</script>
 
 </body>
 </html>
