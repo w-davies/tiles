@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>100m Tile Tracker (Constant Tile Size)</title>
+  <title>100m Tile Tracker – Option 2 (Lat-Corrected + Highlight)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- Leaflet CSS -->
@@ -13,11 +13,7 @@
 
   <style>
     body { margin: 0; overflow: hidden; }
-
-    #map {
-      width: 100vw;
-      height: 100vh;
-    }
+    #map { width: 100vw; height: 100vh; }
 
     #topbar {
       position: absolute;
@@ -25,22 +21,15 @@
       left: 50%;
       transform: translateX(-50%);
       z-index: 2000;
-
       background: rgba(0,0,0,0.65);
       color: white;
       padding: 10px 16px;
       border-radius: 12px;
       font-family: sans-serif;
-
       display: flex;
       gap: 20px;
       align-items: center;
-
       backdrop-filter: blur(4px);
-    }
-
-    #topbar span {
-      font-size: 14px;
     }
 
     #resetBtn {
@@ -50,11 +39,6 @@
       border-radius: 6px;
       color: white;
       cursor: pointer;
-      font-size: 13px;
-    }
-
-    #resetBtn:hover {
-      background: #ff3232;
     }
   </style>
 </head>
@@ -69,35 +53,30 @@
 
   <div id="map"></div>
 
-  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
     /* ---------------------------------------------------------
-       CONSTANT TILE SIZE (Option 1)
-       100m converted to degrees once and reused everywhere.
+       CONSTANTS
     --------------------------------------------------------- */
     const TILE_SIZE_M = 100;
-    const DEG_PER_M = 1 / 111320;   // constant approximation
-    const TILE_SIZE_DEG = TILE_SIZE_M * DEG_PER_M;
+    const DEG_PER_M_LAT = 1 / 111320;
 
     /* ---------------------------------------------------------
        LOAD VISITED TILES SAFELY
     --------------------------------------------------------- */
     let visitedTiles = new Set();
+
     try {
       const raw = JSON.parse(localStorage.getItem("visitedTiles") || "[]");
       if (Array.isArray(raw)) {
         for (const key of raw) {
-          // valid key format: "x_y"
-          const parts = key.split("_");
-          if (parts.length === 2 && parts.every(n => !isNaN(Number(n)))) {
+          if (typeof key === "string" && key.includes("_")) {
             visitedTiles.add(key);
           }
         }
       }
-    } catch (err) {
-      console.warn("Corrupted storage, clearing.");
+    } catch (e) {
       localStorage.removeItem("visitedTiles");
     }
 
@@ -105,19 +84,24 @@
       "Tiles: " + visitedTiles.size;
 
     /* ---------------------------------------------------------
-       TILE COMPUTATION (constant tiles)
+       TILE CALCULATION (lat-corrected)
     --------------------------------------------------------- */
     function computeTile(lat, lon) {
-      const tileX = Math.floor(lon / TILE_SIZE_DEG);
-      const tileY = Math.floor(lat / TILE_SIZE_DEG);
+      const latSize = TILE_SIZE_M * DEG_PER_M_LAT;
+      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos(lat * Math.PI / 180)));
+
+      if (!isFinite(latSize) || !isFinite(lonSize)) return null;
+
+      const tileX = Math.floor(lon / lonSize);
+      const tileY = Math.floor(lat / latSize);
 
       if (!isFinite(tileX) || !isFinite(tileY)) return null;
 
-      return { tileX, tileY };
+      return { tileX, tileY, latSize, lonSize };
     }
 
     /* ---------------------------------------------------------
-       LEAFLET MAP
+       LEAFLET MAP SETUP
     --------------------------------------------------------- */
     const map = L.map('map').setView([52.0, -3.0], 8);
 
@@ -127,29 +111,38 @@
     }).addTo(map);
 
     let userMarker = null;
+    let currentTileRect = null;
 
     /* ---------------------------------------------------------
        DRAW TILE OUTLINE
     --------------------------------------------------------- */
-    function drawTile(tileX, tileY) {
-      const minLat = tileY * TILE_SIZE_DEG;
-      const maxLat = minLat + TILE_SIZE_DEG;
-      const minLon = tileX * TILE_SIZE_DEG;
-      const maxLon = minLon + TILE_SIZE_DEG;
+    function drawTile(tileX, tileY, latSize, lonSize, color="#00FF73", weight=2) {
+      const minLat = tileY * latSize;
+      const maxLat = minLat + latSize;
+      const minLon = tileX * lonSize;
+      const maxLon = minLon + lonSize;
 
-      if (![minLat, maxLat, minLon, maxLon].every(isFinite)) return;
+      if (![minLat, maxLat, minLon, maxLon].every(isFinite)) return null;
 
-      L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
-        color: "#00FF73",
-        weight: 2,
+      return L.rectangle([[minLat, minLon],[maxLat, maxLon]], {
+        color,
+        weight,
         fillOpacity: 0
       }).addTo(map);
     }
 
-    // Draw existing tiles
+    /* ---------------------------------------------------------
+       DRAW SAVED VISITED TILES
+    --------------------------------------------------------- */
     for (const key of visitedTiles) {
       const [x, y] = key.split("_").map(Number);
-      drawTile(x, y);
+
+      // Compute tile sizes at approximate latitude (OK for display)
+      const latSample = y * DEG_PER_M_LAT * TILE_SIZE_M;
+      const latSize = TILE_SIZE_M * DEG_PER_M_LAT;
+      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos(latSample * Math.PI / 180)));
+
+      drawTile(x, y, latSize, lonSize, "#00FF73", 2);
     }
 
     /* ---------------------------------------------------------
@@ -172,12 +165,22 @@
       const tile = computeTile(lat, lon);
       if (!tile) return;
 
-      const key = `${tile.tileX}_${tile.tileY}`;
+      const { tileX, tileY, latSize, lonSize } = tile;
+      const key = `${tileX}_${tileY}`;
 
+      /* Highlight the current tile in yellow */
+      if (currentTileRect) {
+        map.removeLayer(currentTileRect);
+      }
+
+      currentTileRect = drawTile(tileX, tileY, latSize, lonSize, "#FFFF00", 3);
+
+      /* Record visited tile */
       if (!visitedTiles.has(key)) {
         visitedTiles.add(key);
         localStorage.setItem("visitedTiles", JSON.stringify([...visitedTiles]));
-        drawTile(tile.tileX, tile.tileY);
+
+        drawTile(tileX, tileY, latSize, lonSize, "#00FF73", 2);
 
         document.getElementById("tileCount").innerText =
           "Tiles: " + visitedTiles.size;
@@ -187,17 +190,16 @@
     function gpsError(err) {
       document.getElementById("gpsStatus").innerText =
         "GPS error: " + err.message;
-      console.error(err);
     }
 
     navigator.geolocation.watchPosition(
       updatePosition,
       gpsError,
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 
     /* ---------------------------------------------------------
-       RESET BUTTON
+       RESET
     --------------------------------------------------------- */
     document.getElementById("resetBtn").onclick = () => {
       if (!confirm("Clear all visited tiles?")) return;
