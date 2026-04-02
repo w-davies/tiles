@@ -2,8 +2,16 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>100m Tile Tracker – Option 2 (Lat-Corrected + Highlight)</title>
+  <title>100m Tile Tracker – PWA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- ✅ PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+
+  <!-- ✅ iOS PWA support -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
 
   <!-- Leaflet CSS -->
   <link
@@ -31,7 +39,6 @@
       align-items: center;
       backdrop-filter: blur(4px);
     }
-
     #resetBtn {
       padding: 6px 10px;
       background: #ff5c5c;
@@ -53,56 +60,47 @@
 
   <div id="map"></div>
 
+  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- ✅ Register service worker -->
   <script>
-    /* ---------------------------------------------------------
-       CONSTANTS
-    --------------------------------------------------------- */
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js");
+    }
+  </script>
+
+  <script>
+    /* ------------------ CONSTANTS ------------------ */
     const TILE_SIZE_M = 100;
     const DEG_PER_M_LAT = 1 / 111320;
 
-    /* ---------------------------------------------------------
-       LOAD VISITED TILES SAFELY
-    --------------------------------------------------------- */
+    /* ------------------ SAFE STORAGE ------------------ */
     let visitedTiles = new Set();
-
     try {
       const raw = JSON.parse(localStorage.getItem("visitedTiles") || "[]");
       if (Array.isArray(raw)) {
-        for (const key of raw) {
-          if (typeof key === "string" && key.includes("_")) {
-            visitedTiles.add(key);
-          }
-        }
+        raw.forEach(k => {
+          if (typeof k === "string" && k.includes("_")) visitedTiles.add(k);
+        });
       }
-    } catch (e) {
-      localStorage.removeItem("visitedTiles");
-    }
+    } catch (e) { localStorage.removeItem("visitedTiles"); }
 
     document.getElementById("tileCount").innerText =
       "Tiles: " + visitedTiles.size;
 
-    /* ---------------------------------------------------------
-       TILE CALCULATION (lat-corrected)
-    --------------------------------------------------------- */
+    /* ------------------ TILE MATH (Option 2) ------------------ */
     function computeTile(lat, lon) {
       const latSize = TILE_SIZE_M * DEG_PER_M_LAT;
       const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos(lat * Math.PI / 180)));
 
-      if (!isFinite(latSize) || !isFinite(lonSize)) return null;
-
       const tileX = Math.floor(lon / lonSize);
       const tileY = Math.floor(lat / latSize);
-
-      if (!isFinite(tileX) || !isFinite(tileY)) return null;
 
       return { tileX, tileY, latSize, lonSize };
     }
 
-    /* ---------------------------------------------------------
-       LEAFLET MAP SETUP
-    --------------------------------------------------------- */
+    /* ------------------ MAP ------------------ */
     const map = L.map('map').setView([52.0, -3.0], 8);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -113,41 +111,28 @@
     let userMarker = null;
     let currentTileRect = null;
 
-    /* ---------------------------------------------------------
-       DRAW TILE OUTLINE
-    --------------------------------------------------------- */
-    function drawTile(tileX, tileY, latSize, lonSize, color="#00FF73", weight=2) {
-      const minLat = tileY * latSize;
+    function drawTile(tx, ty, latSize, lonSize, color="#00FF73", weight=2) {
+      const minLat = ty * latSize;
       const maxLat = minLat + latSize;
-      const minLon = tileX * lonSize;
+      const minLon = tx * lonSize;
       const maxLon = minLon + lonSize;
 
-      if (![minLat, maxLat, minLon, maxLon].every(isFinite)) return null;
-
-      return L.rectangle([[minLat, minLon],[maxLat, maxLon]], {
+      return L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
         color,
         weight,
         fillOpacity: 0
       }).addTo(map);
     }
 
-    /* ---------------------------------------------------------
-       DRAW SAVED VISITED TILES
-    --------------------------------------------------------- */
-    for (const key of visitedTiles) {
+    /* Render stored tiles */
+    visitedTiles.forEach(key => {
       const [x, y] = key.split("_").map(Number);
-
-      // Compute tile sizes at approximate latitude (OK for display)
-      const latSample = y * DEG_PER_M_LAT * TILE_SIZE_M;
       const latSize = TILE_SIZE_M * DEG_PER_M_LAT;
-      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos(latSample * Math.PI / 180)));
+      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos((y * latSize) * Math.PI / 180)));
+      drawTile(x, y, latSize, lonSize);
+    });
 
-      drawTile(x, y, latSize, lonSize, "#00FF73", 2);
-    }
-
-    /* ---------------------------------------------------------
-       GPS UPDATE HANDLER
-    --------------------------------------------------------- */
+    /* ------------------ GPS HANDLER ------------------ */
     function updatePosition(pos) {
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
@@ -162,26 +147,18 @@
         userMarker.setLatLng([lat, lon]);
       }
 
-      const tile = computeTile(lat, lon);
-      if (!tile) return;
-
-      const { tileX, tileY, latSize, lonSize } = tile;
+      const { tileX, tileY, latSize, lonSize } = computeTile(lat, lon);
       const key = `${tileX}_${tileY}`;
 
-      /* Highlight the current tile in yellow */
-      if (currentTileRect) {
-        map.removeLayer(currentTileRect);
-      }
-
+      /* Highlight current tile */
+      if (currentTileRect) map.removeLayer(currentTileRect);
       currentTileRect = drawTile(tileX, tileY, latSize, lonSize, "#FFFF00", 3);
 
       /* Record visited tile */
       if (!visitedTiles.has(key)) {
         visitedTiles.add(key);
         localStorage.setItem("visitedTiles", JSON.stringify([...visitedTiles]));
-
-        drawTile(tileX, tileY, latSize, lonSize, "#00FF73", 2);
-
+        drawTile(tileX, tileY, latSize, lonSize);
         document.getElementById("tileCount").innerText =
           "Tiles: " + visitedTiles.size;
       }
@@ -192,20 +169,18 @@
         "GPS error: " + err.message;
     }
 
-    navigator.geolocation.watchPosition(
-      updatePosition,
-      gpsError,
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+    navigator.geolocation.watchPosition(updatePosition, gpsError, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 10000
+    });
 
-    /* ---------------------------------------------------------
-       RESET
-    --------------------------------------------------------- */
+    /* ------------------ RESET ------------------ */
     document.getElementById("resetBtn").onclick = () => {
-      if (!confirm("Clear all visited tiles?")) return;
-      localStorage.removeItem("visitedTiles");
-      visitedTiles.clear();
-      location.reload();
+      if (confirm("Clear all visited tiles?")) {
+        localStorage.removeItem("visitedTiles");
+        location.reload();
+      }
     };
   </script>
 
