@@ -2,16 +2,15 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>100m Tile Tracker – PWA</title>
+  <title>100m Tile Tracker – PWA + Dim Mode</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- ✅ PWA Manifest -->
+  <!-- Manifest -->
   <link rel="manifest" href="manifest.json">
 
-  <!-- ✅ iOS PWA support -->
+  <!-- iOS PWA support -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
 
   <!-- Leaflet CSS -->
   <link
@@ -35,17 +34,38 @@
       border-radius: 12px;
       font-family: sans-serif;
       display: flex;
-      gap: 20px;
+      gap: 15px;
       align-items: center;
       backdrop-filter: blur(4px);
     }
-    #resetBtn {
+
+    button {
       padding: 6px 10px;
-      background: #ff5c5c;
+      background: #444;
       border: none;
       border-radius: 6px;
       color: white;
       cursor: pointer;
+    }
+
+    /* Dim mode overlay */
+    #dimOverlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.92);
+      z-index: 5000;
+      display: none;
+    }
+
+    #dimExitHint {
+      color: #fff;
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: sans-serif;
+      font-size: 18px;
+      opacity: 0.25;
     }
   </style>
 </head>
@@ -55,15 +75,21 @@
   <div id="topbar">
     <span id="gpsStatus">GPS: waiting…</span>
     <span id="tileCount">Tiles: 0</span>
+    <button id="dimBtn">Dim Screen</button>
     <button id="resetBtn">Reset</button>
   </div>
 
   <div id="map"></div>
 
+  <!-- Dim overlay -->
+  <div id="dimOverlay">
+    <div id="dimExitHint">Tap to wake</div>
+  </div>
+
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- ✅ Register service worker -->
+  <!-- Register service worker -->
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("service-worker.js");
@@ -71,28 +97,69 @@
   </script>
 
   <script>
-    /* ------------------ CONSTANTS ------------------ */
+    /* ---------------------------------------------------------
+       WAKE LOCK + DIM MODE
+    --------------------------------------------------------- */
+    let wakeLock = null;
+    const dimOverlay = document.getElementById("dimOverlay");
+
+    async function enableDimMode() {
+      // Request wake lock
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request("screen");
+        }
+      } catch (err) {
+        console.warn("Wake Lock not available:", err);
+      }
+
+      // Show near-black overlay
+      dimOverlay.style.display = "block";
+    }
+
+    function disableDimMode() {
+      dimOverlay.style.display = "none";
+
+      // Release wake lock
+      if (wakeLock) {
+        wakeLock.release().catch(()=>{});
+        wakeLock = null;
+      }
+    }
+
+    document.getElementById("dimBtn").onclick = enableDimMode;
+    dimOverlay.onclick = disableDimMode;
+
+    // Reacquire wake lock when page becomes visible again
+    document.addEventListener("visibilitychange", () => {
+      if (wakeLock !== null && document.visibilityState === "visible") {
+        navigator.wakeLock.request("screen").then(wl => wakeLock = wl);
+      }
+    });
+  </script>
+
+  <script>
+    /* ---------------------------------------------------------
+       TILE TRACKER (Option 2 – latitude-corrected)
+    --------------------------------------------------------- */
     const TILE_SIZE_M = 100;
     const DEG_PER_M_LAT = 1 / 111320;
 
-    /* ------------------ SAFE STORAGE ------------------ */
     let visitedTiles = new Set();
+
     try {
       const raw = JSON.parse(localStorage.getItem("visitedTiles") || "[]");
-      if (Array.isArray(raw)) {
-        raw.forEach(k => {
-          if (typeof k === "string" && k.includes("_")) visitedTiles.add(k);
-        });
-      }
-    } catch (e) { localStorage.removeItem("visitedTiles"); }
+      raw.forEach(k => visitedTiles.add(k));
+    } catch {
+      localStorage.removeItem("visitedTiles");
+    }
 
     document.getElementById("tileCount").innerText =
       "Tiles: " + visitedTiles.size;
 
-    /* ------------------ TILE MATH (Option 2) ------------------ */
     function computeTile(lat, lon) {
       const latSize = TILE_SIZE_M * DEG_PER_M_LAT;
-      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos(lat * Math.PI / 180)));
+      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos(lat * Math.PI/180)));
 
       const tileX = Math.floor(lon / lonSize);
       const tileY = Math.floor(lat / latSize);
@@ -100,7 +167,6 @@
       return { tileX, tileY, latSize, lonSize };
     }
 
-    /* ------------------ MAP ------------------ */
     const map = L.map('map').setView([52.0, -3.0], 8);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -111,10 +177,10 @@
     let userMarker = null;
     let currentTileRect = null;
 
-    function drawTile(tx, ty, latSize, lonSize, color="#00FF73", weight=2) {
-      const minLat = ty * latSize;
+    function drawTile(x, y, latSize, lonSize, color="#00FF73", weight=2) {
+      const minLat = y * latSize;
       const maxLat = minLat + latSize;
-      const minLon = tx * lonSize;
+      const minLon = x * lonSize;
       const maxLon = minLon + lonSize;
 
       return L.rectangle([[minLat, minLon], [maxLat, maxLon]], {
@@ -124,15 +190,17 @@
       }).addTo(map);
     }
 
-    /* Render stored tiles */
+    /* Render previously visited tiles */
     visitedTiles.forEach(key => {
       const [x, y] = key.split("_").map(Number);
+
       const latSize = TILE_SIZE_M * DEG_PER_M_LAT;
-      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos((y * latSize) * Math.PI / 180)));
+      const approxLat = y * latSize;
+      const lonSize = TILE_SIZE_M * (1 / (111320 * Math.cos(approxLat * Math.PI/180)));
+
       drawTile(x, y, latSize, lonSize);
     });
 
-    /* ------------------ GPS HANDLER ------------------ */
     function updatePosition(pos) {
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
@@ -150,15 +218,16 @@
       const { tileX, tileY, latSize, lonSize } = computeTile(lat, lon);
       const key = `${tileX}_${tileY}`;
 
-      /* Highlight current tile */
+      // Highlight current tile
       if (currentTileRect) map.removeLayer(currentTileRect);
       currentTileRect = drawTile(tileX, tileY, latSize, lonSize, "#FFFF00", 3);
 
-      /* Record visited tile */
+      // Visit tracking
       if (!visitedTiles.has(key)) {
         visitedTiles.add(key);
         localStorage.setItem("visitedTiles", JSON.stringify([...visitedTiles]));
-        drawTile(tileX, tileY, latSize, lonSize);
+        drawTile(tileX, tileY, latSize, lonSize, "#00FF73", 2);
+
         document.getElementById("tileCount").innerText =
           "Tiles: " + visitedTiles.size;
       }
@@ -169,13 +238,13 @@
         "GPS error: " + err.message;
     }
 
-    navigator.geolocation.watchPosition(updatePosition, gpsError, {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 10000
-    });
+    navigator.geolocation.watchPosition(
+      updatePosition,
+      gpsError,
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+    );
 
-    /* ------------------ RESET ------------------ */
+    /* RESET */
     document.getElementById("resetBtn").onclick = () => {
       if (confirm("Clear all visited tiles?")) {
         localStorage.removeItem("visitedTiles");
